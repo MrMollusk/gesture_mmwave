@@ -8,7 +8,7 @@ from typing import Dict, Optional, List, Tuple
 import serial
 from serial.tools import list_ports
 
-# Optional keyboard control
+# Keyboard control for PowerPoint
 try:
     from pynput.keyboard import Controller as KeyboardController, Key
     HAVE_PYNPUT = True
@@ -20,8 +20,8 @@ MAGIC = b"\x02\x01\x04\x03\x06\x05\x08\x07"
 FRAME_HDR_LENGTH = 40
 TLV_HDR_SZ = 8
 
-# If you later find the exact numeric TLV type IDs from TI source,
-# set them here. Leave as None for auto-detect.
+# Fill these in later if you find the exact TI TLV IDs.
+# Leave as None for auto-detect.
 FEATURE_TLV_TYPE: Optional[int] = None
 PROB_TLV_TYPE: Optional[int] = None
 
@@ -38,12 +38,15 @@ GESTURE_LABELS = [
     "SHINE",
 ]
 
+# PowerPoint slideshow controls:
+# L2R = swipe left-to-right  -> next slide
+# R2L = swipe right-to-left  -> previous slide
 GESTURE_TO_ACTION = {
     "L2R": "next_slide",
     "R2L": "prev_slide",
-    "ON": "select",
-    "OFF": "pause",
-    "SHINE": "mode_toggle",
+    "ON": None,
+    "OFF": None,
+    "SHINE": None,
     "U2D": None,
     "D2U": None,
     "CW": None,
@@ -137,7 +140,7 @@ def packet_parser(packet: bytes):
         # Prefer TI SDK convention: tlv_len = payload length
         if tlv_len <= remain:
             payload_len = tlv_len
-        # Fallback if a build uses total TLV length including the 8-byte header
+        # Fallback if build uses total TLV length including 8-byte header
         elif tlv_len >= TLV_HDR_SZ and (tlv_len - TLV_HDR_SZ) <= remain:
             payload_len = tlv_len - TLV_HDR_SZ
         else:
@@ -207,7 +210,7 @@ def parse_gesture_tlvs(tlvs: List[Tuple[int, bytes]]) -> Tuple[Optional[GestureF
     features = None
     probs = None
 
-    # Exact type match first if you later fill them in
+    # Exact type match first if you fill the TLV type IDs later
     for tlv_type, payload in tlvs:
         if FEATURE_TLV_TYPE is not None and tlv_type == FEATURE_TLV_TYPE:
             maybe = decode_features_tlv(payload)
@@ -246,7 +249,6 @@ class PowerPointGestureController:
         self.cooldown_s = float(cooldown_s)
 
         self.kb = KeyboardController() if HAVE_PYNPUT else None
-        self.mode = 0
         self.last_fired_t = 0.0
         self.last_candidate = None
         self.candidate_count = 0
@@ -264,15 +266,6 @@ class PowerPointGestureController:
         elif action == "prev_slide":
             self._press(Key.left)
             print("[action] prev_slide")
-        elif action == "select":
-            self._press(Key.enter)
-            print("[action] select")
-        elif action == "pause":
-            self._press("b")
-            print("[action] pause/black_screen")
-        elif action == "mode_toggle":
-            self.mode ^= 1
-            print(f"[action] mode_toggle -> mode={self.mode}")
 
     def update(self, label: str, prob: float):
         now = time.monotonic()
@@ -326,6 +319,9 @@ def main():
     print(f"[data-uart] opening {port} @ {args.baud}")
     ser = serial.Serial(port, args.baud, timeout=0.05)
     buf = bytearray()
+
+    if args.actions and not HAVE_PYNPUT:
+        raise SystemExit("pynput is not installed. Run: pip install pynput")
 
     controller = PowerPointGestureController(
         min_prob=args.min_prob,
